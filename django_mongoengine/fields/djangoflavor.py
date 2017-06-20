@@ -213,7 +213,7 @@ class DateTimeField(DjangoField):
 
 
 class ReferenceField(DjangoField):
-     is_relation = True
+    is_relation = True
 
     def formfield(self, **kwargs):
         defaults = {
