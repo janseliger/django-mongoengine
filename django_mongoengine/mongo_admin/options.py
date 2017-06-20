@@ -28,7 +28,7 @@ from django.apps import apps
 
 from django_mongoengine.utils import force_text
 from django_mongoengine.fields import (ListField, EmbeddedDocumentField,
-                                       ReferenceField, StringField)
+                                       ReferenceField, StringField, ObjectIdField, DateTimeField)
 
 from django_mongoengine.mongo_admin.util import RelationWrapper
 
@@ -85,12 +85,14 @@ class BaseDocumentAdmin(djmod.BaseModelAdmin):
                             can_add_related=can_add_related)
                 return form_field
 
-        if isinstance(db_field, StringField):
+        if isinstance(db_field, StringField) or isinstance(db_field, ObjectIdField):
             if db_field.max_length is None:
                 kwargs = dict({'widget': widgets.AdminTextareaWidget}, **kwargs)
             else:
                 kwargs = dict({'widget': widgets.AdminTextInputWidget}, **kwargs)
-            return db_field.formfield(**kwargs)
+
+        if isinstance(db_field, DateTimeField):
+            kwargs = dict({'widget': widgets.AdminDateWidget}, **kwargs)
 
         # If we've got overrides for the formfield defined, use 'em. **kwargs
         # passed to formfield_for_dbfield override the defaults.
@@ -152,6 +154,7 @@ class BaseDocumentAdmin(djmod.BaseModelAdmin):
 @copy_class(djmod.ModelAdmin)
 class DocumentAdmin(BaseDocumentAdmin):
     "Encapsulates all admin options and functionality for a given model."
+    inline_instances = []
 
 
     def __init__(self, model, admin_site):
@@ -163,13 +166,23 @@ class DocumentAdmin(BaseDocumentAdmin):
             'ENGINE', 'django.db.backends.dummy'
         ).endswith('dummy')
 
+    def get_formsets_with_inlines(self, request, obj=None):
+        """
+        Yields formsets and the corresponding inlines.
+        """
+        for inline in self.get_inline_instances(request, obj):
+            yield inline.get_formset(request, obj), inline
+        for inline in self._get_inline_instances():
+            yield inline.get_formset(request, obj), inline
+
 # XXX: add inline init somewhere
     def _get_inline_instances(self):
         for f in six.itervalues(self.model._fields):
             if not (isinstance(f, ListField) and isinstance(getattr(f, 'field', None), EmbeddedDocumentField)) and not isinstance(f, EmbeddedDocumentField):
                 continue
             # Should only reach here if there is an embedded document...
-            if f.name in self.exclude:
+            
+            if self.exclude and f.name in self.exclude:
                 continue
             document = self.model()
             if hasattr(f, 'field') and f.field is not None:
@@ -194,11 +207,12 @@ class DocumentAdmin(BaseDocumentAdmin):
             if isinstance(f, EmbeddedDocumentField):
                 inline_instance.max_num = 1
                 # exclude field from normal form
-                if f.name not in self.exclude:
+                if self.exclude and f.name not in self.exclude:
                     self.exclude.append(f.name)
             if f.name == 'created_at' and f.name not in self.exclude:
                 self.exclude.append(f.name)
             self.inline_instances.append(inline_instance)
+        return self.inline_instances
 
     def get_changelist_form(self, request, **kwargs):
         kwargs.setdefault("form", DocumentForm)
@@ -468,6 +482,7 @@ class InlineDocumentAdmin(BaseDocumentAdmin):
     verbose_name = None
     verbose_name_plural = None
     can_delete = True
+    declared_fieldsets = None
 
     def __init__(self, parent_document, admin_site):
         self.admin_site = admin_site
@@ -498,7 +513,11 @@ class InlineDocumentAdmin(BaseDocumentAdmin):
         if self.declared_fieldsets:
             fields = flatten_fieldsets(self.declared_fieldsets)
         else:
-            fields = None
+            fields = []
+#             for field in obj._meta.fields:
+#                 fields.append(field.name)
+#             fields = None
+
         if self.exclude is None:
             exclude = []
         else:

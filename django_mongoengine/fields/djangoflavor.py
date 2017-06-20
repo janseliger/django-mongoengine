@@ -3,10 +3,13 @@ from django.core.validators import RegexValidator
 from django import forms
 from django.db.models import Field
 from django.utils.functional import cached_property
+from bson import ObjectId
 
 from mongoengine import fields
 
 from django_mongoengine.forms import fields as formfields
+import six
+
 
 _field_defaults = (
     ("editable", True),
@@ -20,6 +23,8 @@ _field_defaults = (
 class DjangoField(object):
 
     get_choices = Field.__dict__["get_choices"]
+    is_relation = False
+    remote_field = None
 
     def __init__(self, *args, **kwargs):
         for k, v in _field_defaults:
@@ -205,6 +210,7 @@ class DateTimeField(DjangoField):
 
 
 class ReferenceField(DjangoField):
+     is_relation = True
 
     def formfield(self, **kwargs):
         defaults = {
@@ -287,10 +293,23 @@ class EmbeddedDocumentField(DjangoField):
     def formfield(self, **kwargs):
         from django_mongoengine.forms.documents import documentform_factory
         defaults = {
-            'label': self.label,
+            'label': self.verbose_name,
             'help_text': self.help_text,
         }
         form_class = EmbeddedDocumentField
         defaults.update(kwargs)
         form = form_class(documentform_factory(self.document_type), **defaults)
         return form
+
+
+class ObjectIdField(StringField):
+
+    def prepare_query_value(self, op, value):
+        return self.to_mongo(value)
+
+    def validate(self, value):
+        try:
+            ObjectId(six.text_type(value))
+        except Exception:
+            self.error('Invalid Object ID')
+
